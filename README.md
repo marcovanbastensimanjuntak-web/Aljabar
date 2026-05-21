@@ -1,0 +1,2 @@
+# Aljabar
+Kompres Foto
