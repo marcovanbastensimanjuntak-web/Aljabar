@@ -1,0 +1,311 @@
+"""
+=============================================================
+  KOMPRESI GAMBAR MENGGUNAKAN SVD (Singular Value Decomposition)
+  - Input : foto berwarna atau grayscale dari user
+  - Input : nilai k bebas dari user
+  - Output: 2 gambar → hasil kompres BERWARNA & GRAYSCALE
+=============================================================
+  Cara pakai di Google Colab:
+  1. Copy-paste seluruh kode ini ke satu cell
+  2. Klik Run (▶️)
+  3. Upload foto saat diminta, lalu masukkan nilai k
+=============================================================
+"""
+
+# ── Import Library ─────────────────────────────────────────────────────────────
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from PIL import Image
+import io
+import os
+
+print("=" * 55)
+print("  KOMPRESI GAMBAR — SVD (Singular Value Decomposition)")
+print("=" * 55)
+print("✅ Library berhasil diimport.\n")
+
+
+# ── Fungsi Inti ────────────────────────────────────────────────────────────────
+
+def compress_channel(channel: np.ndarray, k: int) -> np.ndarray:
+    """Kompresi satu channel 2D menggunakan rank-k SVD."""
+    U, S, Vt = np.linalg.svd(channel, full_matrices=False)
+    k = min(k, len(S))
+    result = (U[:, :k] * S[:k]) @ Vt[:k, :]
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def compress_rgb(img_array: np.ndarray, k: int) -> np.ndarray:
+    """Kompresi gambar RGB — setiap channel dikompresi terpisah."""
+    channels = [
+        compress_channel(img_array[:, :, c].astype(float), k)
+        for c in range(3)
+    ]
+    return np.stack(channels, axis=2)
+
+
+def compress_gray(img_array: np.ndarray, k: int) -> np.ndarray:
+    """Kompresi gambar Grayscale."""
+    return compress_channel(img_array.astype(float), k)
+
+
+def hitung_psnr(original: np.ndarray, compressed: np.ndarray) -> float:
+    """Hitung PSNR dalam dB. Makin tinggi = makin mirip aslinya."""
+    mse = np.mean((original.astype(float) - compressed.astype(float)) ** 2)
+    if mse == 0:
+        return float("inf")
+    return 20 * np.log10(255.0 / np.sqrt(mse))
+
+
+def hitung_rasio(shape: tuple, k: int) -> tuple:
+    """Hitung rasio & penghematan data SVD rank-k."""
+    M, N = shape[0], shape[1]
+    asli  = M * N
+    svd   = k * (M + 1 + N)
+    rasio = asli / svd
+    hemat = (1 - svd / asli) * 100
+    return rasio, hemat
+
+
+def max_k(shape: tuple) -> int:
+    """Nilai k maksimum yang masuk akal (min dimensi gambar)."""
+    return min(shape[0], shape[1])
+
+
+# ── Upload Gambar ──────────────────────────────────────────────────────────────
+
+def upload_gambar() -> tuple:
+    """Upload gambar dari user. Mengembalikan (img_rgb, img_gray, filename)."""
+    try:
+        from google.colab import files
+        print("📂 Silakan pilih foto (JPG / PNG / BMP / WEBP)...")
+        uploaded = files.upload()
+    except ImportError:
+        print("⚠️  Tidak berjalan di Google Colab.")
+        path = input("   Masukkan path file gambar: ").strip()
+        uploaded = {os.path.basename(path): open(path, "rb").read()}
+
+    if not uploaded:
+        raise ValueError("❌ Tidak ada file yang diupload.")
+
+    filename  = list(uploaded.keys())[0]
+    img_bytes = uploaded[filename]
+
+    img_pil   = Image.open(io.BytesIO(img_bytes))
+    img_rgb   = np.array(img_pil.convert("RGB"))
+    img_gray  = np.array(img_pil.convert("L"))
+
+    H, W = img_gray.shape
+    print(f"\n✅ File berhasil diupload  : {filename}")
+    print(f"📐 Ukuran gambar          : {W} × {H} pixel")
+    print(f"🔢 Nilai k maksimum aman  : {max_k((H, W))}\n")
+
+    return img_rgb, img_gray, filename
+
+
+# ── Input Nilai k dari User ────────────────────────────────────────────────────
+
+def input_k(shape: tuple) -> int:
+    """Minta user memasukkan nilai k dengan validasi."""
+    k_max = max_k(shape)
+    print("─" * 55)
+    print("  PETUNJUK NILAI k:")
+    print(f"  • Rentang valid  : 1 — {k_max}")
+    print("  • k besar (misal 100+) → kualitas tinggi, kompresi rendah")
+    print("  • k kecil (misal 1–10) → sangat buram, kompresi tinggi")
+    print("─" * 55)
+
+    while True:
+        try:
+            k = int(input(f"\n🔢 Masukkan nilai k (1 – {k_max}): ").strip())
+            if 1 <= k <= k_max:
+                return k
+            else:
+                print(f"   ⚠️  Nilai k harus antara 1 dan {k_max}. Coba lagi.")
+        except ValueError:
+            print("   ⚠️  Input tidak valid. Masukkan bilangan bulat.")
+
+
+# ── Tampilkan & Simpan Hasil ───────────────────────────────────────────────────
+
+def tampilkan_dan_simpan(img_rgb, img_gray, hasil_color, hasil_gray, k, filename):
+    """Tampilkan perbandingan dan simpan 2 output gambar."""
+
+    H, W  = img_gray.shape
+    rasio_c, hemat_c = hitung_rasio((H, W), k)
+    rasio_g, hemat_g = hitung_rasio((H, W), k)
+    psnr_c = hitung_psnr(img_rgb,  hasil_color)
+    psnr_g = hitung_psnr(img_gray, hasil_gray)
+
+    print("\n📊 HASIL KOMPRESI:")
+    print(f"   🟦 Berwarna  → Rasio: {rasio_c:.2f}× | Hemat: {hemat_c:.1f}% | PSNR: {psnr_c:.2f} dB")
+    print(f"   ⬜ Grayscale → Rasio: {rasio_g:.2f}× | Hemat: {hemat_g:.1f}% | PSNR: {psnr_g:.2f} dB")
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+    fig = plt.figure(figsize=(20, 9))
+    fig.patch.set_facecolor("#0d0d16")
+
+    # Judul utama
+    nama_dasar = os.path.splitext(filename)[0]
+    fig.suptitle(
+        f"Kompresi SVD  —  {filename}   |   k = {k}",
+        fontsize=16, fontweight="bold",
+        color="#e8e8f5", y=0.97,
+    )
+
+    # GridSpec: 2 baris × 3 kolom  (kolom 0-1 = gambar, kolom 2 = panel info)
+    gs = gridspec.GridSpec(
+        2, 3,
+        figure=fig,
+        hspace=0.30, wspace=0.06,
+        left=0.02, right=0.98,
+        top=0.90,  bottom=0.06,
+        width_ratios=[1, 1, 0.55],
+    )
+
+    def buat_ax(subplot, gambar, judul, sub="", cmap_val=None, border=None):
+        ax = fig.add_subplot(subplot)
+        ax.imshow(gambar, cmap=cmap_val)
+        ax.set_title(judul, fontsize=12, fontweight="bold",
+                     color="#ffffff", pad=7)
+        ax.set_xlabel(sub, fontsize=9.5, color="#aaaacc", labelpad=5)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(bool(border))
+            if border:
+                spine.set_edgecolor(border)
+                spine.set_linewidth(3)
+        return ax
+
+    # Baris atas — Berwarna
+    buat_ax(gs[0, 0], img_rgb,
+            "📷 Asli — Berwarna",
+            f"{W} × {H} px")
+    buat_ax(gs[0, 1], hasil_color,
+            f"🗜️  Kompres Berwarna  (k = {k})",
+            f"Rasio {rasio_c:.1f}×  |  Hemat {hemat_c:.0f}%  |  PSNR {psnr_c:.1f} dB",
+            border="#4fc3f7")
+
+    # Baris bawah — Grayscale
+    buat_ax(gs[1, 0], img_gray,
+            "📷 Asli — Grayscale",
+            f"{W} × {H} px",
+            cmap_val="gray")
+    buat_ax(gs[1, 1], hasil_gray,
+            f"🗜️  Kompres Grayscale  (k = {k})",
+            f"Rasio {rasio_g:.1f}×  |  Hemat {hemat_g:.0f}%  |  PSNR {psnr_g:.1f} dB",
+            cmap_val="gray", border="#81c784")
+
+    # ── Panel info kanan ───────────────────────────────────────────────────────
+    # Bar chart PSNR
+    ax_bar = fig.add_subplot(gs[0, 2])
+    ax_bar.set_facecolor("#161626")
+    labels = ["Berwarna", "Grayscale"]
+    psnrs  = [psnr_c, psnr_g]
+    clrs   = ["#4fc3f7", "#81c784"]
+    bars   = ax_bar.bar(labels, psnrs, color=clrs, width=0.42, edgecolor="none")
+    for bar, val in zip(bars, psnrs):
+        ax_bar.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.25,
+            f"{val:.1f} dB",
+            ha="center", va="bottom",
+            fontsize=11, color="white", fontweight="bold",
+        )
+    ax_bar.set_title("Kualitas PSNR", color="white", fontsize=11, pad=8)
+    ax_bar.tick_params(colors="white", labelsize=10)
+    ax_bar.set_ylabel("dB", color="#aaaacc", fontsize=9)
+    ax_bar.set_ylim(0, max(psnrs) * 1.2)
+    for spine in ax_bar.spines.values():
+        spine.set_edgecolor("#2a2a4e")
+
+    # Tabel ringkasan
+    ax_tbl = fig.add_subplot(gs[1, 2])
+    ax_tbl.axis("off")
+    header = ["Metrik", "Berwarna", "Grayscale"]
+    rows   = [
+        ["Nilai k",   str(k),              str(k)],
+        ["Rasio",     f"{rasio_c:.2f}×",   f"{rasio_g:.2f}×"],
+        ["Hemat",     f"{hemat_c:.1f}%",   f"{hemat_g:.1f}%"],
+        ["PSNR",      f"{psnr_c:.2f} dB",  f"{psnr_g:.2f} dB"],
+    ]
+    tbl = ax_tbl.table(
+        cellText=rows, colLabels=header,
+        loc="center", cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    tbl.scale(1.15, 2.1)
+    for (r, c), cell in tbl.get_celld().items():
+        if r == 0:
+            cell.set_facecolor("#2a2a4e")
+        elif c == 0:
+            cell.set_facecolor("#1c1c38")
+        else:
+            cell.set_facecolor("#13132a")
+        cell.set_text_props(color="white")
+        cell.set_edgecolor("#2a2a5e")
+    ax_tbl.set_title("Ringkasan", color="white", fontsize=11, pad=8)
+
+    # ── Simpan visualisasi ─────────────────────────────────────────────────────
+    vis_name = f"{nama_dasar}_visualisasi_k{k}.png"
+    plt.savefig(vis_name, dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.show()
+
+    # ── Simpan 2 output gambar ─────────────────────────────────────────────────
+    out_color = f"{nama_dasar}_k{k}_berwarna.jpg"
+    out_gray  = f"{nama_dasar}_k{k}_grayscale.jpg"
+
+    Image.fromarray(hasil_color).save(out_color, "JPEG", quality=95)
+    Image.fromarray(hasil_gray).save(out_gray,   "JPEG", quality=95)
+
+    print(f"\n💾 File tersimpan:")
+    print(f"   🟦 {out_color}")
+    print(f"   ⬜ {out_gray}")
+    print(f"   📊 {vis_name}")
+
+    # Download otomatis di Colab
+    try:
+        from google.colab import files
+        print("\n📥 Mengunduh file hasil kompresi...")
+        files.download(out_color)
+        files.download(out_gray)
+        files.download(vis_name)
+        print("✅ Semua file berhasil diunduh!")
+    except ImportError:
+        print("📁 File tersimpan di direktori saat ini.")
+
+    print("\n" + "=" * 55)
+    print("  ✅ KOMPRESI SELESAI!")
+    print("=" * 55)
+
+
+# ── Program Utama ──────────────────────────────────────────────────────────────
+
+def main():
+    # 1. Upload gambar
+    img_rgb, img_gray, filename = upload_gambar()
+
+    # 2. Minta nilai k dari user
+    k = input_k(img_gray.shape)
+
+    print(f"\n⚙️  Memproses kompresi dengan k = {k} ...")
+
+    # 3. Kompresi
+    hasil_color = compress_rgb(img_rgb,   k)
+    hasil_gray  = compress_gray(img_gray, k)
+
+    print("✅ Kompresi selesai!")
+
+    # 4. Tampilkan & simpan
+    tampilkan_dan_simpan(
+        img_rgb, img_gray,
+        hasil_color, hasil_gray,
+        k, filename,
+    )
+
+
+main()
